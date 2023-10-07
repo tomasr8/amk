@@ -195,11 +195,10 @@ static const uint8_t configuration_descriptor[] PROGMEM = {
     0x01       // wInterval - Poll for new data 1000/s, or once every ms
 };
 
-
 int main(void) {
   usb_init();
+  while(1) {}
 }
-
 
 int usb_init() {
   cli();  // Global Interrupt Disable
@@ -218,49 +217,11 @@ int usb_init() {
   UDCON &= ~(1<<LSM);  // FULL SPEED MODE
   UDCON &= ~(1<<DETACH);  // Attach USB Controller to the data bus
 
-//   UDIEN |= (1 << EORSTE) |
-        //    (1 << SOFE); 
-           // Re-enable the EORSTE (End Of Reset) Interrupt so we
+  UDIEN |= (1 << EORSTE);  // Re-enable the EORSTE (End Of Reset) Interrupt so we
                          // know when we can configure the control endpoint
   usb_config_status = 0;
   sei();  // Global Interrupt Enable
   return 0;
-}
-
-int send_keypress(uint8_t key, uint8_t mod) {
-  keyboard_pressed_keys[0] = key;
-  keyboard_modifier = mod;
-  if (usb_send() < 0)
-    return -1;
-  keyboard_pressed_keys[0] = 0;
-  keyboard_modifier = 0;
-  if (usb_send() < 0)
-    return -1;
-  return 0;
-}
-
-int usb_send() {
-  if (!usb_config_status)
-    return -1;  // Why are you even trying
-  cli();
-  UENUM = KEYBOARD_ENDPOINT_NUM;
-
-  while (!(UEINTX & (1 << RWAL)))
-    ;  // Wait for banks to be ready
-  UEDATX = keyboard_modifier;
-  UEDATX = 0;
-  for (int i = 0; i < 6; i++) {
-    UEDATX = keyboard_pressed_keys[i];
-  }
-
-  UEINTX = 0b00111010;
-  current_idle = 0;
-  sei();
-  return 0;
-}
-
-bool get_usb_config_status() {
-  return usb_config_status;
 }
 
 ISR(USB_GEN_vect) {
@@ -286,29 +247,6 @@ ISR(USB_GEN_vect) {
     UEIENX =
         (1 << RXSTPE);  // Re-enable the RXSPTE (Receive Setup Packet) Interrupt
     return;
-  }
-  if ((udint_temp & (1 << SOFI)) &&
-      usb_config_status) {  // Check for Start Of Frame Interrupt and correct
-                            // usb configuration, send keypress if a keypress
-                            // event has not been sent through usb_send
-    this_interrupt++;
-    if (keyboard_idle_value &&
-        (this_interrupt & 3) == 0) {  // Scaling by four, trying to save memory
-      UENUM = KEYBOARD_ENDPOINT_NUM;
-      if (UEINTX & (1 << RWAL)) {  // Check if banks are writable
-        current_idle++;
-        if (current_idle ==
-            keyboard_idle_value) {  // Have we reached the idle threshold?
-          current_idle = 0;
-          UEDATX = keyboard_modifier;
-          UEDATX = 0;
-          for (int i = 0; i < 6; i++) {
-            UEDATX = keyboard_pressed_keys[i];
-          }
-          UEINTX = 0b00111010;
-        }
-      }
-    }
   }
 }
 
@@ -398,21 +336,6 @@ ISR(USB_COM_vect) {
       return;
     }
 
-    if (bRequest == SET_CONFIGURATION &&
-        bmRequestType ==
-            0) {  // Refer to USB Spec 9.4.7 - This is the configuration request
-                  // to place the device into address mode
-      usb_config_status = wValue;
-      UEINTX &= ~(1 << TXINI);
-      UENUM = KEYBOARD_ENDPOINT_NUM;
-      UECONX = 1;
-      UECFG0X = 0b11000001;  // EPTYPE Interrupt IN
-      UECFG1X = 0b00000110;  // Dual Bank Endpoint, 8 Bytes, allocate memory
-      UERST = 0x1E;          // Reset all of the endpoints
-      UERST = 0;
-      return;
-    }
-
     if (bRequest == SET_ADDRESS) {
       UEINTX &= ~(1 << TXINI);
       while (!(UEINTX & (1 << TXINI)))
@@ -420,98 +343,6 @@ ISR(USB_COM_vect) {
 
       UDADDR = wValue | (1 << ADDEN);  // Set the device address
       return;
-    }
-
-    if (bRequest == GET_CONFIGURATION &&
-        bmRequestType == 0x80) {  // GET_CONFIGURATION is the host trying to get
-                                  // the current config status of the device
-      while (!(UEINTX & (1 << TXINI)))
-        ;  // Wait until the banks are ready to be filled
-      UEDATX = usb_config_status;
-      UEINTX &= ~(1 << TXINI);
-      return;
-    }
-
-    if (bRequest == GET_STATUS) {
-      while (!(UEINTX & (1 << TXINI)))
-        ;
-      UEDATX = 0;
-      UEDATX = 0;
-      UEINTX &= ~(1 << TXINI);
-      return;
-    }
-
-    if (wIndex == 0) {  // Is this a request to the keyboard interface for HID
-                        // class-specific requests?
-      if (bmRequestType ==
-          0xA1) {  // GET Requests - Refer to the table in HID Specification 7.2
-                   // - This byte specifies the data direction of the packet.
-                   // Unnecessary since bRequest is unique, but it makes the
-                   // code clearer
-        if (bRequest == GET_REPORT) {  // Get the current HID report
-          while (!(UEINTX & (1 << TXINI)))
-            ;  // Wait for the banks to be ready for transmission
-          UEDATX = keyboard_modifier;
-
-          for (int i = 0; i < 6; i++) {
-            UEDATX = keyboard_pressed_keys
-                [i];  // According to the spec, this method of getting the
-                      // report is not used for device polling, although we
-                      // still have to implement the response
-          }
-          UEINTX &= ~(1 << TXINI);
-          return;
-        }
-        if (bRequest == GET_IDLE) {
-          while (!(UEINTX & (1 << TXINI)))
-            ;
-
-          UEDATX = keyboard_idle_value;
-
-          UEINTX &= ~(1 << TXINI);
-          return;
-        }
-        if (bRequest == GET_PROTOCOL) {
-          while (!(UEINTX & (1 << TXINI)))
-            ;
-
-          UEDATX = keyboard_protocol;
-
-          UEINTX &= ~(1 << TXINI);
-          return;
-        }
-      }
-
-      if (bmRequestType ==
-          0x21) {  // SET Requests - Host-to-device data direction
-        if (bRequest == SET_REPORT) {
-          while (!(UEINTX & (1 << RXOUTI)))
-            ;  // This is the opposite of the TXINI one, we are waiting until
-               // the banks are ready for reading instead of for writing
-          keyboard_leds = UEDATX;
-
-          UEINTX &= ~(1 << TXINI);  // Send ACK and clear TX bit
-          UEINTX &= ~(1 << RXOUTI);
-          return;
-        }
-        if (bRequest == SET_IDLE) {
-          keyboard_idle_value = wValue;  //
-          current_idle = 0;
-
-          UEINTX &= ~(1 << TXINI);  // Send ACK and clear TX bit
-          return;
-        }
-        if (bRequest ==
-            SET_PROTOCOL) {  // This request is only mandatory for boot devices,
-                             // and this is a boot device
-          keyboard_protocol =
-              wValue >> 8;  // Nobody cares what happens to this, arbitrary cast
-                            // from 16 bit to 8 bit doesn't matter
-
-          UEINTX &= ~(1 << TXINI);  // Send ACK and clear TX bit
-          return;
-        }
-      }
     }
   }
   PORTC = 0xFF;
