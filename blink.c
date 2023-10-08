@@ -182,21 +182,20 @@ int usb_init() {
   // Enable pads regulator
   UHWCON |= (0x01 << UVREGE);
 
-  // Configure clock
-  PLLCSR |= 0x12;
-  // PLLCSR |= (0x01 << PLLE);            // Set PLL Enable bit
-  // PLLFRQ |= (0x01 << PDIV2);           // Set PLL frequency to 48mhz
-  while (!(PLLCSR & (0x01 << PLOCK)))  // Wait for the clock to settle
-    ;
+  // Configure PLL clock prescaler to 16mhz and enable the clock
+  // which is used as the source for the USB clock
+  // (Should work even w/o setting the prescaler)
+  PLLCSR |= (0x01 << PINDIV) | (0x01 << PLLE);
+  while (!(PLLCSR & (0x01 << PLOCK))) {}  // Wait for the clock to settle
 
-  // Enable VBUS pad & USB CONTROLLER
+  // Enable VBUS pad & USB CONTROLLER itself
   USBCON |= (1 << USBE) | (1 << OTGPADE);
 
-  // Unfreeze clock
+  // Unfreeze USB controller clock
   USBCON &= ~(0x01 << FRZCLK);
 
-  // Full speed mode
-  UDCON &= ~(1 << LSM);
+  // Set full speed mode
+  UDCON &= ~(0x01 << LSM);
 
   // Attach to the bus
   UDCON &= ~(0x01 << DETACH);
@@ -212,6 +211,22 @@ int main(void) {
   while(1) {}
 }
 
+bool configure_interrupt_endpoint() {
+  UENUM = 1;                  // Select Endpoint 1
+  UECONX = (1 << EPEN);       // Enable the Endpoint
+  UECFG0X = (0x01 << EPTYPE1) | (0x01 << EPTYPE0) | (0x01 << EPDIR);  // Interrup IN endpoint
+  UECFG1X |= (0x01 << EPSIZE1) | (0x01 << EPSIZE0) | (0x01 << ALLOC); // 64 byte endpoint, single-bank, allocate the memory
+
+  if (!(UESTA0X & (1 << CFGOK))) {  // Check if endpoint configuration was successful
+    return;
+  }
+
+  UERST |= (0x01 << EPRST1);  // Reset Endpoint (potentially unnecessary)
+  UERST &= ~(0x01 << EPRST1);
+
+  UEIENX = (1 << RXSTPE);  // Enable the Receive Setup Packet Interrupt
+}
+
 ISR(USB_GEN_vect) {
   if (UDINT & (0x01 << EORSTI)) {
     UDINT &= ~(0x01 << EORSTI);
@@ -219,21 +234,22 @@ ISR(USB_GEN_vect) {
     UENUM = 0;                  // Select Endpoint 0, the default control endpoint
     UECONX = (1 << EPEN);       // Enable the Endpoint
     UECFG0X = 0;                // Control Endpoint, OUT direction for control endpoint
-    UECFG1X |= 0x22;  // 32 byte endpoint, 1 bank, allocate the memory
+    UECFG1X |= (0x01 << EPSIZE1) | (0x01 << ALLOC); // 32 byte endpoint, 1 bank, allocate the memory
 
     if (!(UESTA0X & (1 << CFGOK))) {  // Check if endpoint configuration was successful
       return;
     }
 
-    UERST = 1;  // Reset Endpoint
-    UERST = 0;
+    UERST |= (0x01 << EPRST0);  // Reset Endpoint (potentially unnecessary)
+    UERST &= ~(0x01 << EPRST0);
 
-    UEIENX = (1 << RXSTPE);  // Enable the RXSPTE (Receive Setup Packet) Interrupt
+    UEIENX = (1 << RXSTPE);  // Enable the Receive Setup Packet Interrupt
   }
 }
 
 ISR(USB_COM_vect) {
   UENUM = 0;
+
   if (UEINTX & (1 << RXSTPI)) {
     uint8_t bmRequestType = UEDATX;  // UEDATX is FIFO; see table in README
     uint8_t bRequest = UEDATX;
@@ -244,16 +260,11 @@ ISR(USB_COM_vect) {
     uint16_t wLength = UEDATX;
     wLength |= UEDATX << 8;
 
-    DDRC = 0xFF;
-
-    UEINTX &= ~(
-        (1 << RXSTPI) | (1 << RXOUTI) |
-        (1 << TXINI));
+    UEINTX &= ~((1 << RXSTPI) | (1 << RXOUTI) | (1 << TXINI));
 
     if (bRequest == SET_ADDRESS) {
       UEINTX &= ~(1 << TXINI);
-      while (!(UEINTX & (1 << TXINI)))
-        ;  // Wait until the banks are ready to be filled
+      while (!(UEINTX & (1 << TXINI))) {}  // Wait until the banks are ready to be filled
 
       UDADDR = wValue | (1 << ADDEN);  // Set the device address
       return;
