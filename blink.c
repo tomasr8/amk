@@ -7,8 +7,21 @@
 #include <avr/pgmspace.h>
 #include <util/delay.h>
 #include "blink.h"
+#include "endpoints.h"
 
+uint8_t current_configuration = 0;
 uint8_t keyboard_idle_duration = 125;
+
+enum USB_STATE {
+  UNINITIALIZED,
+  CONTROL_ENDPOINT_CONFIGURED,
+  ADDRESSED,
+  INTERRUPT_ENDPOINT_CONFIGURED,
+};
+
+enum USB_STATE usb_state = UNINITIALIZED;
+
+static void set_usb_device_address(SetupRequest_t *request);
 
 
 static const uint8_t device_descriptor[] PROGMEM = {
@@ -179,7 +192,7 @@ static const uint8_t configuration_descriptor[] PROGMEM = {
 };
 
 
-int usb_init() {
+void usb_init() {
   cli();
   // Enable pads regulator
   UHWCON |= (0x01 << UVREGE);
@@ -205,7 +218,6 @@ int usb_init() {
   // Enable USB End Of Reset interrupt
   UDIEN |= (0x01 << EORSTE);
   sei();
-  return 0;
 }
 
 int main(void) {
@@ -213,39 +225,13 @@ int main(void) {
   while(1) {}
 }
 
-bool configure_interrupt_endpoint() {
-  UENUM = 1;                  // Select Endpoint 1
-  UECONX = (1 << EPEN);       // Enable the Endpoint
-  UECFG0X = (0x01 << EPTYPE1) | (0x01 << EPTYPE0) | (0x01 << EPDIR);  // Interrup IN endpoint
-  UECFG1X |= (0x01 << EPSIZE1) | (0x01 << EPSIZE0) | (0x01 << ALLOC); // 64 byte endpoint, single-bank, allocate the memory
-
-  if (!(UESTA0X & (1 << CFGOK))) {  // Check if endpoint configuration was successful
-    return;
-  }
-
-  UERST |= (0x01 << EPRST1);  // Reset Endpoint (potentially unnecessary)
-  UERST &= ~(0x01 << EPRST1);
-
-  UEIENX = (1 << RXSTPE);  // Enable the Receive Setup Packet Interrupt
-}
-
 ISR(USB_GEN_vect) {
   if (UDINT & (0x01 << EORSTI)) {
     UDINT &= ~(0x01 << EORSTI);
-    
-    UENUM = 0;                  // Select Endpoint 0, the default control endpoint
-    UECONX = (1 << EPEN);       // Enable the Endpoint
-    UECFG0X = 0;                // Control Endpoint, OUT direction for control endpoint
-    UECFG1X |= (0x01 << EPSIZE1) | (0x01 << EPSIZE0) | (0x01 << ALLOC); // 64 byte endpoint, 1 bank, allocate the memory
-
-    if (!(UESTA0X & (1 << CFGOK))) {  // Check if endpoint configuration was successful
-      return;
+    bool result = configure_control_endpoint();
+    if(result) {
+      usb_state = CONTROL_ENDPOINT_CONFIGURED;
     }
-
-    UERST |= (0x01 << EPRST0);  // Reset Endpoint (potentially unnecessary)
-    UERST &= ~(0x01 << EPRST0);
-
-    UEIENX = (1 << RXSTPE);  // Enable the Receive Setup Packet Interrupt
   }
 }
 
@@ -253,49 +239,39 @@ ISR(USB_COM_vect) {
   UENUM = 0;
 
   if (UEINTX & (1 << RXSTPI)) {
-    uint8_t bmRequestType = UEDATX;  // UEDATX is FIFO; see table in README
-    uint8_t bRequest = UEDATX;
-    uint16_t wValue = UEDATX;
-    wValue |= UEDATX << 8;
-    uint16_t wIndex = UEDATX;
-    wIndex |= UEDATX << 8;
-    uint16_t wLength = UEDATX;
-    wLength |= UEDATX << 8;
+    SetupRequest_t request;
+    read_setup_request(&request);
 
-    UEINTX &= ~((1 << RXSTPI) | (1 << RXOUTI) | (1 << TXINI));
-
-    if (bRequest == SET_ADDRESS) {
-      UEINTX &= ~(1 << TXINI);
-      while (!(UEINTX & (1 << TXINI))) {}  // Wait until the banks are ready to be filled
-
-      UDADDR = wValue | (1 << ADDEN);  // Set the device address
+    if (request.bRequest == SET_ADDRESS) {
+      set_usb_device_address(&request);
       return;
-    } else if (bRequest == GET_IDLE) {
+    } else if (request.bRequest == GET_IDLE) {
+      UEINTX &= ~((1 << RXSTPI) | (1 << RXOUTI) | (1 << TXINI));
       while (!(UEINTX & (1 << TXINI))) {}
 
       UEDATX = keyboard_idle_duration;
 
       UEINTX &= ~(1 << TXINI);
       return;
-    } else if (bRequest == GET_DESCRIPTOR) {
+    } else if (request.bRequest == GET_DESCRIPTOR) {
       // The Host is requesting a descriptor to enumerate the device
       uint8_t* descriptor;
       uint8_t descriptor_length;
 
-      if (wValue == 0x0100) {  // Is the host requesting a device descriptor?
+      if (request.wValue == 0x0100) {  // Is the host requesting a device descriptor?
         descriptor = device_descriptor;
         descriptor_length = pgm_read_byte(descriptor);
-      } else if (wValue == 0x0200) {  // Is it asking for a configuration descriptor?
+      } else if (request.wValue == 0x0200) {  // Is it asking for a configuration descriptor?
         descriptor = configuration_descriptor;
         descriptor_length =
             CONFIG_SIZE;             // Configuration descriptor is comprised of many
                                       // different descriptors; the length is more than
                                       // bLength
-      } else if (wValue ==
+      } else if (request.wValue ==
                  0x2100) {  // Is it asking for a HID Report Descriptor?
         descriptor = configuration_descriptor + HID_OFFSET;
         descriptor_length = pgm_read_byte(descriptor);
-      } else if (wValue == 0x2200) {
+      } else if (request.wValue == 0x2200) {
         descriptor = keyboard_HID_descriptor;
         descriptor_length = sizeof(keyboard_HID_descriptor);
       } else {
@@ -306,14 +282,16 @@ ISR(USB_COM_vect) {
         return;
       }
 
-      uint8_t length = wLength;
-      if(wLength < descriptor_length) {
-        length = wLength;
+      uint8_t length = request.wLength;
+      if(request.wLength < descriptor_length) {
+        length = request.wLength;
       }
+
+      clear_setup_flag();
 
       while (length > 0) {
         if (UEINTX & (1 << RXOUTI))
-          return;  // If there is another packet, exit to handle it
+          break;  // If there is another packet, exit to handle it
 
         if (!(UEINTX & (1 << TXINI))) {
           continue;
@@ -329,11 +307,20 @@ ISR(USB_COM_vect) {
         UEINTX &= ~(1 << TXINI);
       }
 
-      // while (!(UEINTX & (0x01 << TXINI))) {}
-      // UEINTX &= ~((0x01 << TXINI) | (0x01 << FIFOCON));
-      // while (!(UEINTX & (0x01 << RXOUTI))) {}
-      // UEINTX &= ~((0x01 << RXOUTI) | (0x01 << FIFOCON));
-      // return;
+      clear_status_stage(request.bmRequestType);
     }
   }
+}
+
+static void set_usb_device_address(SetupRequest_t *request) {
+  uint8_t address = request->wValue & 0x7F;
+
+  UDADDR = address;
+
+  clear_setup_flag();
+  clear_status_stage(request->bmRequestType);
+
+  while (!(is_in_ready()));
+
+  UDADDR |= (1 << ADDEN);
 }

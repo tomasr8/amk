@@ -16,7 +16,7 @@ uint8_t keyboard_protocol; // This doesn't matter at all, we just need it for su
 uint8_t keyboard_leds;  // You don't need to use this if you don't want
                                // to or don't have the hardware
 
-int usb_init();
+void usb_init();
 bool get_usb_config_status();
 int usb_send();
 int send_keypress(uint8_t, uint8_t);
