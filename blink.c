@@ -8,6 +8,8 @@
 #include <util/delay.h>
 #include "blink.h"
 
+uint8_t keyboard_idle_duration = 125;
+
 
 static const uint8_t device_descriptor[] PROGMEM = {
     // Stored in PROGMEM (Program Memory) Flash, freeing up some SRAM where
@@ -267,6 +269,13 @@ ISR(USB_COM_vect) {
       while (!(UEINTX & (1 << TXINI))) {}  // Wait until the banks are ready to be filled
 
       UDADDR = wValue | (1 << ADDEN);  // Set the device address
+      return;
+    } else if (bRequest == GET_IDLE) {
+      while (!(UEINTX & (1 << TXINI))) {}
+
+      UEDATX = keyboard_idle_duration;
+
+      UEINTX &= ~(1 << TXINI);
       return;
     } else if (bRequest == GET_DESCRIPTOR) {
       // The Host is requesting a descriptor to enumerate the device
