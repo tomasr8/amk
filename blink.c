@@ -22,7 +22,7 @@ static const uint8_t device_descriptor[] PROGMEM = {
     0,   // bDeviceSubClass - 0, HID will specify
     0,   // bDeviceProtocol - No class specific protocols on a device level, HID
          // interface will specify
-    32,  // bMaxPacketSize0 - 32 byte packet size; control endpoint was
+    64,  // bMaxPacketSize0 - 32 byte packet size; control endpoint was
          // configured in UECFG1X to be 32 bytes
     (idVendor & 255),
     ((idVendor >> 8) &
@@ -172,7 +172,7 @@ static const uint8_t configuration_descriptor[] PROGMEM = {
     KEYBOARD_ENDPOINT_NUM |
         0x80,  // Set keyboard endpoint to IN endpoint, refer to table
     0x03,      // bmAttributes - Set endpoint to interrupt
-    8, 0,      // wMaxPacketSize - The size of the keyboard banks
+    64, 0,      // wMaxPacketSize - The size of the keyboard banks
     0x01       // wInterval - Poll for new data 1000/s, or once every ms
 };
 
@@ -234,7 +234,7 @@ ISR(USB_GEN_vect) {
     UENUM = 0;                  // Select Endpoint 0, the default control endpoint
     UECONX = (1 << EPEN);       // Enable the Endpoint
     UECFG0X = 0;                // Control Endpoint, OUT direction for control endpoint
-    UECFG1X |= (0x01 << EPSIZE1) | (0x01 << ALLOC); // 32 byte endpoint, 1 bank, allocate the memory
+    UECFG1X |= (0x01 << EPSIZE1) | (0x01 << EPSIZE0) | (0x01 << ALLOC); // 64 byte endpoint, 1 bank, allocate the memory
 
     if (!(UESTA0X & (1 << CFGOK))) {  // Check if endpoint configuration was successful
       return;
@@ -311,7 +311,7 @@ ISR(USB_COM_vect) {
         }
 
         int i = 0;
-        while((length > 0) && (i < 32)) {
+        while((length > 0) && (i < 64)) {
           UEDATX = pgm_read_byte(descriptor++);
           length--;
           i++;
