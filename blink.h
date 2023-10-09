@@ -6,18 +6,10 @@ usb.h
 #include <stdbool.h>
 #include <stdint.h>
 
-
 extern volatile uint8_t keyboard_pressed_keys[6];
 extern volatile uint8_t keyboard_modifier;
 
-uint8_t usb_config_status;
-uint8_t keyboard_protocol; // This doesn't matter at all, we just need it for supporting a request
-
-uint8_t keyboard_leds;  // You don't need to use this if you don't want
-                               // to or don't have the hardware
-
 void usb_init();
-bool get_usb_config_status();
 int usb_send();
 int send_keypress(uint8_t, uint8_t);
 
@@ -32,12 +24,6 @@ int send_keypress(uint8_t, uint8_t);
 #define SET_INTERFACE 0x0B
 #define SYNCH_FRAME 0x0C
 
-#define idVendor 0x03eb  // Atmel Corp.
-#define idProduct 0x2ff4  // ATMega32u4 DFU Bootloader (This isn't a real product so I don't
-          // have legitimate IDs)
-#define KEYBOARD_ENDPOINT_NUM 3  // The second endpoint is the HID endpoint
-
-#define CONFIG_SIZE 34
 #define HID_OFFSET 18
 
 // HID Class-specific request codes - refer to HID Class Specification
@@ -49,5 +35,20 @@ int send_keypress(uint8_t, uint8_t);
 #define SET_REPORT 0x09
 #define SET_IDLE 0x0A
 #define SET_PROTOCOL 0x0B
+
+// USB 2.0 Specification table 9-5
+#define DESCRIPTOR_DEVICE 1
+#define DESCRIPTOR_CONFIGURATION 2
+#define DESCRIPTOR_STRING 3
+#define DESCRIPTOR_INTERFACE 4
+#define DESCRIPTOR_ENDPOINT 5
+#define DESCRIPTOR_DEVICE_QUALIFIER 6
+#define DESCRIPTOR_OTHER_SPEED_CONFIGURATION 7
+#define DESCRIPTOR_INTERFACE_POWER 8
+
+// HID 1.1 Chapter 7.1
+#define DESCRIPTOR_CLASS_HID 0x21
+#define DESCRIPTOR_CLASS_REPORT 0x22
+
 
 #endif

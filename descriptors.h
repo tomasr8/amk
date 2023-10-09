@@ -3,8 +3,8 @@
 #include <stdint.h>
 
 // http://www.linux-usb.org/usb.ids
-#define idVendor 0x03eb  // Atmel Corp.
-#define idProduct 0x2ff4  // ATMega32u4 DFU Bootloader
+#define IDVENDOR 0x03eb  // Atmel Corp.
+#define IDPRODUCT 0x2ff4  // ATMega32u4 DFU Bootloader
 
 typedef struct
 {
@@ -78,7 +78,9 @@ typedef struct
   USB_EndpointDescriptor_t endpoint;
 } USB_Configuration_t;
 
-const USB_DeviceDescriptor_t device_descriptor = {
+typedef uint8_t USB_HIDReportDescriptor_t;
+
+const USB_DeviceDescriptor_t device_descriptor PROGMEM = {
     .bLength = 0x12,
     .bDescriptorType = 0x01,
     .bcdUSB = 0x200,
@@ -86,15 +88,15 @@ const USB_DeviceDescriptor_t device_descriptor = {
     .bDeviceSubClass = 0x00,
     .bDeviceProtocol = 0x00,
     .bMaxPacketSize0 = 0x40,  // 64
-    .idVendor = idVendor,
-    .idProduct = idProduct,
+    .idVendor = IDVENDOR,
+    .idProduct = IDPRODUCT,
     .bcdDevice = 0x0100,
     .iManufacturer = 0x00,
     .iProduct = 0x00,
     .iSerialNumber = 0x00,
     .bNumConfigurations = 0x01};
 
-const USB_Configuration_t configuration = {
+const USB_Configuration_t configuration_descriptor PROGMEM = {
   .configration = {
     .bLength = 0x09,
     .bDescriptorType = 0x02,
@@ -122,20 +124,22 @@ const USB_Configuration_t configuration = {
     .bcdHID = 0x101,
     .bCountryCode = 0x00,
     .bNumDescriptors = 0x01,
-    .bReportDescriptorType = 0x33,
-    .wDescriptorLength = 0x3F
+    .bReportDescriptorType = 0x22,
+    .wDescriptorLength = 0x33  // size of the HID report descriptor
   },
   .endpoint = {
     .bLength = 0x07,
     .bDescriptorType = 0x05,
     .bEndpointAddress = 0b10000001,
     .bmAttributes = 0b00000011,
-    .wMaxPacketSize = 0x40,
+    .wMaxPacketSize = 0x40,  // 64
     .bInterval = 0x0A
   }
 };
 
-static const uint8_t boot_compat_hid_report_descriptor[] PROGMEM = {
+// Boot protocol compatible report descriptor
+// See https://www.devever.net/~hl/usbnkro
+static const USB_HIDReportDescriptor_t hid_report_descriptor[] PROGMEM = {
     0x05, 0x01,  // Usage Page - Generic Desktop - HID Spec Appendix E E.6 - The
                  // values for the HID tags are not clearly listed anywhere really, so
                  // this table is very useful
