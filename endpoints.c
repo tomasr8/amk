@@ -43,6 +43,5 @@ bool configure_keyboard_endpoint() {
     UERST |= (1 << EPRST1);  // Reset Endpoint (potentially unnecessary)
     UERST &= ~(1 << EPRST1);
 
-    UEIENX = (1 << RXSTPE);  // Enable the Receive Setup Packet Interrupt
     return true;
 }

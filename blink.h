@@ -30,6 +30,7 @@ int send_keypress(uint8_t, uint8_t);
 #define SET_CONFIGURATION 0x09
 #define GET_INTERFACE 0x0A
 #define SET_INTERFACE 0x0B
+#define SYNCH_FRAME 0x0C
 
 #define idVendor 0x03eb  // Atmel Corp.
 #define idProduct 0x2ff4  // ATMega32u4 DFU Bootloader (This isn't a real product so I don't

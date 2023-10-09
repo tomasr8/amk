@@ -12,16 +12,19 @@
 uint8_t current_configuration = 0;
 uint8_t keyboard_idle_duration = 125;
 
-enum USB_STATE {
-  UNINITIALIZED,
-  CONTROL_ENDPOINT_CONFIGURED,
+enum USB_DEVICE_STATE {
+  DEFAULT,
   ADDRESSED,
-  INTERRUPT_ENDPOINT_CONFIGURED,
+  CONFIGURED,
 };
 
-enum USB_STATE usb_state = UNINITIALIZED;
+enum USB_DEVICE_STATE usb_device_state = DEFAULT;
 
-static void set_usb_device_address(SetupRequest_t *request);
+static void usb_device_set_address(SetupRequest_t *request);
+static void usb_device_get_descriptor(SetupRequest_t *request);
+static void usb_device_get_configuration(SetupRequest_t *request);
+static void usb_device_set_configuration(SetupRequest_t *request);
+static void usb_device_get_idle(SetupRequest_t *request);
 
 
 static const uint8_t device_descriptor[] PROGMEM = {
@@ -229,91 +232,53 @@ ISR(USB_GEN_vect) {
   if (UDINT & (0x01 << EORSTI)) {
     UDINT &= ~(0x01 << EORSTI);
     bool result = configure_control_endpoint();
-    if(result) {
-      usb_state = CONTROL_ENDPOINT_CONFIGURED;
-    }
   }
 }
 
 ISR(USB_COM_vect) {
   UENUM = 0;
 
-  if (UEINTX & (1 << RXSTPI)) {
+  if (is_setup_packet()) {
     SetupRequest_t request;
     read_setup_request(&request);
 
     if (request.bRequest == SET_ADDRESS) {
-      set_usb_device_address(&request);
-      return;
-    } else if (request.bRequest == GET_IDLE) {
-      UEINTX &= ~((1 << RXSTPI) | (1 << RXOUTI) | (1 << TXINI));
-      while (!(UEINTX & (1 << TXINI))) {}
-
-      UEDATX = keyboard_idle_duration;
-
-      UEINTX &= ~(1 << TXINI);
+      usb_device_set_address(&request);
       return;
     } else if (request.bRequest == GET_DESCRIPTOR) {
-      // The Host is requesting a descriptor to enumerate the device
-      uint8_t* descriptor;
-      uint8_t descriptor_length;
-
-      if (request.wValue == 0x0100) {  // Is the host requesting a device descriptor?
-        descriptor = device_descriptor;
-        descriptor_length = pgm_read_byte(descriptor);
-      } else if (request.wValue == 0x0200) {  // Is it asking for a configuration descriptor?
-        descriptor = configuration_descriptor;
-        descriptor_length =
-            CONFIG_SIZE;             // Configuration descriptor is comprised of many
-                                      // different descriptors; the length is more than
-                                      // bLength
-      } else if (request.wValue ==
-                 0x2100) {  // Is it asking for a HID Report Descriptor?
-        descriptor = configuration_descriptor + HID_OFFSET;
-        descriptor_length = pgm_read_byte(descriptor);
-      } else if (request.wValue == 0x2200) {
-        descriptor = keyboard_HID_descriptor;
-        descriptor_length = sizeof(keyboard_HID_descriptor);
-      } else {
-        PORTC = 0xFF;
-        UECONX |=
-            (1 << STALLRQ) | (1 << EPEN);  // Enable the endpoint and stall, the
-                                           // descriptor does not exist
-        return;
-      }
-
-      uint8_t length = request.wLength;
-      if(request.wLength < descriptor_length) {
-        length = request.wLength;
-      }
-
-      clear_setup_flag();
-
-      while (length > 0) {
-        if (UEINTX & (1 << RXOUTI))
-          break;  // If there is another packet, exit to handle it
-
-        if (!(UEINTX & (1 << TXINI))) {
-          continue;
-        }
-
-        int i = 0;
-        while((length > 0) && (i < 64)) {
-          UEDATX = pgm_read_byte(descriptor++);
-          length--;
-          i++;
-        }
-
-        UEINTX &= ~(1 << TXINI);
-      }
-
-      clear_status_stage(request.bmRequestType);
+      usb_device_get_descriptor(&request);
+      return;
+    } else if(request.bRequest == GET_CONFIGURATION) {
+      usb_device_get_configuration(&request);
+      return;
+    } else if(request.bRequest == SET_CONFIGURATION) {
+      usb_device_set_configuration(&request);
+      return;
+    } else if(request.bRequest == GET_INTERFACE) {
+      return;
+    } else if(request.bRequest == SET_INTERFACE) {
+      return;
+    } else if(request.bRequest == SYNCH_FRAME) {
+      // only for isochronous endpoints which we don't use
+      return;
+    } else if (request.bRequest == GET_IDLE) {
+      usb_device_get_idle(&request);
+      return;
     }
   }
+
+  // If we the RXSTPI flag is still set, it means that the request was not recognized
+  // We stall the endpoint.
+  // There is no need to clear the stall (STALLRQC), the hardware does it automatically
+  // before the next SETUP packet (see section 22.11.1 of the atmega32u4 datasheet).
+  if (is_setup_packet()) {
+		clear_setup_flag();
+    stall_request();
+	}
 }
 
-static void set_usb_device_address(SetupRequest_t *request) {
-  uint8_t address = request->wValue & 0x7F;
+static void usb_device_set_address(SetupRequest_t *request) {
+  uint8_t address = request->wValue & 0x7F; // usb uses 7-bit addresses (i.e. max address is 127)
 
   UDADDR = address;
 
@@ -322,5 +287,108 @@ static void set_usb_device_address(SetupRequest_t *request) {
 
   while (!(is_in_ready()));
 
+  // The new address accanot be enabled before the status stage has completed,
+  // otherwise the status stage would fail. We must first set the status stage and only then enable the address.
   UDADDR |= (1 << ADDEN);
+  usb_device_state = ADDRESSED;
+}
+
+
+static void usb_device_get_descriptor(SetupRequest_t *request) {
+// The Host is requesting a descriptor to enumerate the device
+  uint8_t* descriptor;
+  uint8_t descriptor_length;
+
+  if (request->wValue == 0x0100) {  // Is the host requesting a device descriptor?
+    descriptor = device_descriptor;
+    descriptor_length = pgm_read_byte(descriptor);
+  } else if (request->wValue == 0x0200) {  // Is it asking for a configuration descriptor?
+    descriptor = configuration_descriptor;
+    descriptor_length =
+        CONFIG_SIZE;             // Configuration descriptor is comprised of many
+                                  // different descriptors; the length is more than
+                                  // bLength
+  } else if (request->wValue ==
+              0x2100) {  // Is it asking for a HID Report Descriptor?
+    descriptor = configuration_descriptor + HID_OFFSET;
+    descriptor_length = pgm_read_byte(descriptor);
+  } else if (request->wValue == 0x2200) {
+    descriptor = keyboard_HID_descriptor;
+    descriptor_length = sizeof(keyboard_HID_descriptor);
+  } else {
+    PORTC = 0xFF;
+    UECONX |=
+        (1 << STALLRQ) | (1 << EPEN);  // Enable the endpoint and stall, the
+                                        // descriptor does not exist
+    return;
+  }
+
+  uint8_t length = request->wLength;
+  if(request->wLength < descriptor_length) {
+    length = request->wLength;
+  }
+
+  clear_setup_flag();
+
+  while (length > 0) {
+    if (is_out_received())
+      break;  // If there is another packet, exit to handle it
+
+    if (!(is_in_ready())) {
+      continue;
+    }
+
+    int i = 0;
+    while((length > 0) && (i < 64)) {
+      UEDATX = pgm_read_byte(descriptor++);
+      length--;
+      i++;
+    }
+
+    clear_in_flag();
+  }
+
+  clear_status_stage(request->bmRequestType);
+}
+
+static void usb_device_get_configuration(SetupRequest_t *request) {
+  uint8_t value = (uint8_t)request->wValue;
+  if(value > 1) {
+    return;
+  }
+
+  clear_setup_flag();
+
+  write_byte(current_configuration);
+  clear_in_flag();
+
+  clear_status_stage(request->bmRequestType);
+}
+
+static void usb_device_set_configuration(SetupRequest_t *request) {
+  uint8_t value = (uint8_t)request->wValue;
+  if(value > 1) {
+    return;
+  }
+
+  clear_setup_flag();
+
+  current_configuration = value;
+
+  clear_status_stage(request->bmRequestType);
+
+  if(value == 0 && usb_device_state == CONFIGURED) {
+    usb_device_state = ADDRESSED;
+  } else if (value != 0 && usb_device_state == ADDRESSED) {
+    usb_device_state = CONFIGURED;
+  }
+}
+
+static void usb_device_get_idle(SetupRequest_t *request) {
+  clear_setup_flag();
+
+  UEDATX = keyboard_idle_duration; // TODO: divide by 4
+
+  clear_in_flag();
+  clear_status_stage(request->bmRequestType);
 }

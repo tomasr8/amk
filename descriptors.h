@@ -2,6 +2,7 @@
 #include <avr/pgmspace.h>
 #include <stdint.h>
 
+// http://www.linux-usb.org/usb.ids
 #define idVendor 0x03eb  // Atmel Corp.
 #define idProduct 0x2ff4  // ATMega32u4 DFU Bootloader
 
@@ -133,8 +134,6 @@ const USB_Configuration_t configuration = {
     .bInterval = 0x0A
   }
 };
-
-// uint16_t size = (sizeof(keyboard_HID_descriptor) << 8);
 
 static const uint8_t boot_compat_hid_report_descriptor[] PROGMEM = {
     0x05, 0x01,  // Usage Page - Generic Desktop - HID Spec Appendix E E.6 - The

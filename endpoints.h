@@ -32,11 +32,15 @@ __attribute__((always_inline)) static inline void clear_setup_flag() {
 }
 
 __attribute__((always_inline)) static inline void clear_in_flag() {
-    UEINTX &= ~(1 << TXINI);
+    UEINTX &= ~((1 << TXINI) | (1 << FIFOCON));
 }
 
 __attribute__((always_inline)) static inline void clear_out_flag() {
-    UEINTX &= ~(1 << RXOUTI);
+    UEINTX &= ~((1 << RXOUTI) | (1 << FIFOCON));
+}
+
+__attribute__((always_inline)) static inline void stall_request() {
+    UECONX |= (1 << STALLRQ);
 }
 
 __attribute__((always_inline)) static inline void clear_status_stage(
@@ -55,6 +59,10 @@ __attribute__((always_inline)) static inline void clear_status_stage(
 __attribute__((always_inline, warn_unused_result)) static inline uint8_t
 read_byte() {
     return UEDATX;
+}
+
+__attribute__((always_inline)) static inline void write_byte(uint8_t value) {
+    UEDATX = value;
 }
 
 void read_setup_request(SetupRequest_t *request);
