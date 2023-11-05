@@ -65,8 +65,14 @@ __attribute__((always_inline)) static inline void write_byte(uint8_t value) {
     UEDATX = value;
 }
 
-void read_setup_request(SetupRequest_t *request);
+__attribute__((always_inline, warn_unused_result)) static inline bool
+endpoint_is_read_write_allowed() {
+    return ((UEINTX & (1 << RWAL)) ? true : false);
+}
 
+void read_setup_request(SetupRequest_t *request);
+void select_control_endpoint();
+void select_keyboard_endpoint();
 bool configure_control_endpoint();
 bool configure_keyboard_endpoint();
 

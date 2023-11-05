@@ -7,6 +7,14 @@ void read_setup_request(SetupRequest_t *request) {
     }
 }
 
+void select_control_endpoint() {
+    UENUM = 0;
+}
+
+void select_keyboard_endpoint() {
+    UENUM = 1;
+}
+
 bool configure_control_endpoint() {
     UENUM = 0;             // Select Endpoint 0, the default control endpoint
     UECONX = (1 << EPEN);  // Enable the Endpoint
@@ -19,7 +27,7 @@ bool configure_control_endpoint() {
         return false;
     }
 
-    UERST |= (1 << EPRST0);  // Reset Endpoint (potentially unnecessary)
+    UERST |= (1 << EPRST0);  // Reset Endpoint (potentially unnecessary?)
     UERST &= ~(1 << EPRST0);
 
     UEIENX = (1 << RXSTPE);  // Enable the Receive Setup Packet Interrupt
@@ -40,7 +48,7 @@ bool configure_keyboard_endpoint() {
         return false;
     }
 
-    UERST |= (1 << EPRST1);  // Reset Endpoint (potentially unnecessary)
+    UERST |= (1 << EPRST1);  // Reset Endpoint (potentially unnecessary?)
     UERST &= ~(1 << EPRST1);
 
     return true;
