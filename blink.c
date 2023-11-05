@@ -36,29 +36,29 @@ static void hid_set_protocol(SetupRequest_t *request);
 void usb_init() {
     cli();
     // Enable pads regulator
-    UHWCON |= (0x01 << UVREGE);
+    UHWCON |= (1 << UVREGE);
 
     // Configure PLL clock prescaler to 16mhz and enable the clock
     // which is used as the source for the USB clock
     // (Should work even w/o setting the prescaler)
-    PLLCSR |= (0x01 << PINDIV) | (0x01 << PLLE);
-    while (!(PLLCSR & (0x01 << PLOCK))) {
+    PLLCSR |= (1 << PINDIV) | (1 << PLLE);
+    while (!(PLLCSR & (1 << PLOCK))) {
     }  // Wait for the clock to settle
 
     // Enable VBUS pad & USB CONTROLLER itself
     USBCON |= (1 << USBE) | (1 << OTGPADE);
 
     // Unfreeze USB controller clock
-    USBCON &= ~(0x01 << FRZCLK);
+    USBCON &= ~(1 << FRZCLK);
 
     // Set full speed mode
-    UDCON &= ~(0x01 << LSM);
+    UDCON &= ~(1 << LSM);
 
     // Attach to the bus
-    UDCON &= ~(0x01 << DETACH);
+    UDCON &= ~(1 << DETACH);
 
-    // Enable USB End Of Reset interrupt
-    UDIEN |= (0x01 << EORSTE);
+    // Enable USB "End Of Reset Interrupt" and "Start Of Frame Interrupt"
+    UDIEN |= (1 << EORSTE) | (1 << SOFE);
     sei();
 }
 
