@@ -50,5 +50,4 @@ int send_keypress(uint8_t, uint8_t);
 #define DESCRIPTOR_CLASS_HID 0x21
 #define DESCRIPTOR_CLASS_REPORT 0x22
 
-
 #endif

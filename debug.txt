@@ -1,0 +1,3 @@
+sudo usbhid-dump -s 1:34 -f -e stream
+
+lsusb -s 4 -v

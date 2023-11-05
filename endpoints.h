@@ -5,7 +5,22 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+// bmRequestType bit definitions
+// USB 2.0 Specification Table 9-3
+// D7 Data Phase Transfer Direction
 #define REQDIR_DEVICETOHOST (1 << 7)
+#define REQDIR_HOSTTODEVICE (0 << 7)
+// D6..5 Type
+#define REQTYPE_STANDARD (0 << 5)
+#define REQTYPE_CLASS (1 << 5)
+#define REQTYPE_VENDOR (2 << 5)
+#define REQTYPE_RESERVED (3 << 5)
+// D4..0 Recipient
+#define REQREC_DEVICE 0
+#define REQREC_INTERFACE 1
+#define REQREC_ENDPOINT 2
+#define REQREC_OTHER 3
+// 4..31 = Reserved
 
 typedef struct {
     uint8_t bmRequestType;

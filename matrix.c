@@ -1,16 +1,29 @@
 #include "matrix.h"
 
+#define NUM_ROWS 2
+#define NUM_COLS 4
+
+typedef struct {
+    uint8_t modifiers;
+    bool is_overflow;
+    uint8_t pressed_keys[NUM_ROWS * NUM_COLS];
+} keyboard_state_t;
+
 uint8_t keyboard_modifiers = 0;
 uint8_t keyboard_keys[] = {0, 0, 0, 0, 0, 0, 0, 0};
 
-#define NUM_ROWS 2
-#define NUM_COLS 4
 uint8_t col_pins[] = {PORTB0, PORTB1, PORTB2, PORTB3};
 uint8_t row_pins[] = {PORTB4, PORTB5};
 uint8_t keyboard_layout[NUM_ROWS][NUM_COLS] = {{0, 0, 0, 0}, {0, 0, 0, 0}};
 
 bool keyboard_state_raw[NUM_ROWS][NUM_COLS] = {{0, 0, 0, 0}, {0, 0, 0, 0}};
 bool keyboard_state[NUM_ROWS][NUM_COLS] = {{0, 0, 0, 0}, {0, 0, 0, 0}};
+uint8_t keyboard_pressed_keys[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+// uint8_t keyboard_report[6+8] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+keyboard_state_t _keyboard_state = {.modifiers = 0,
+                                    .is_overflow = false,
+                                    .pressed_keys = {0, 0, 0, 0, 0, 0, 0, 0}};
 
 void init_pins() {
     for (uint8_t i = 0; i < NUM_COLS; i++) {
@@ -43,9 +56,7 @@ bool matrix_scan() {
     return changed;
 }
 
-void debounce() {
-
-}
+void debounce() {}
 
 void _matrix_scan() {
     const bool changed = matrix_scan();
@@ -72,4 +83,48 @@ void _matrix_scan() {
             k++;
         }
     }
+}
+
+void reset_state() {
+    _keyboard_state.modifiers = 0;
+    _keyboard_state.is_overflow = false;
+
+    for (uint8_t i = 0; i < (NUM_ROWS * NUM_COLS); i++) {
+        _keyboard_state.pressed_keys[i] = 0;
+    }
+}
+
+keyboard_state_t* get_pressed_keys() {
+    reset_state();
+
+    uint8_t k = 0;
+    uint8_t num_pressed_keys = 0;
+    for (uint8_t i = 0; i < NUM_COLS; i++) {
+        for (uint8_t j = 0; j < NUM_ROWS; j++) {
+            const uint8_t keycode = keyboard_layout[j][i];
+            const bool is_pressed = keyboard_state[j][i];
+            if (!is_pressed) {
+                if (is_modifier_key(keycode)) {
+                    _keyboard_state.modifiers &= ~(1 << (keycode & ~0xe0));
+                } else {
+                    _keyboard_state.pressed_keys[k] = 0;
+                }
+            } else {
+                if (is_modifier_key(keycode)) {
+                    _keyboard_state.modifiers |= (1 << (keycode & ~0xe0));
+                } else {
+                    num_pressed_keys++;
+                    _keyboard_state.pressed_keys[num_pressed_keys] =
+                        keyboard_layout[j][i];
+                }
+            }
+            k++;
+        }
+    }
+
+    if (num_pressed_keys > 6) {
+        _keyboard_state.is_overflow = true;
+    }
+
+    return &_keyboard_state;
 }

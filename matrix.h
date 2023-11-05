@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <util/delay.h>
+#include "keys.h"
 
 __attribute__((always_inline)) static inline bool is_modifier_key(
     uint8_t keycode) {

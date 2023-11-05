@@ -11,10 +11,12 @@
 
 #include "descriptors.h"
 #include "endpoints.h"
+#include "keys.h"
 
 bool using_report_protocol = true;
 uint8_t current_configuration = 0;
 uint16_t keyboard_idle_duration = 500;
+uint16_t keyboard_idle_remaining = 0;
 
 enum USB_DEVICE_STATE {
     DEFAULT,
@@ -24,6 +26,10 @@ enum USB_DEVICE_STATE {
 
 enum USB_DEVICE_STATE usb_device_state = DEFAULT;
 
+static void handle_standard_request(SetupRequest_t *request);
+static void handle_hid_request(SetupRequest_t *request);
+
+static void usb_device_get_status(SetupRequest_t *request);
 static void usb_device_set_address(SetupRequest_t *request);
 static void usb_device_get_descriptor(SetupRequest_t *request);
 static void usb_device_get_configuration(SetupRequest_t *request);
@@ -32,6 +38,8 @@ static void hid_get_idle(SetupRequest_t *request);
 static void hid_set_idle(SetupRequest_t *request);
 static void hid_get_protocol(SetupRequest_t *request);
 static void hid_set_protocol(SetupRequest_t *request);
+
+static void send_report();
 
 void usb_init() {
     cli();
@@ -45,7 +53,7 @@ void usb_init() {
     while (!(PLLCSR & (1 << PLOCK))) {
     }  // Wait for the clock to settle
 
-    // Enable VBUS pad & USB CONTROLLER itself
+    // Enable VBUS pad & the USB CONTROLLER itself
     USBCON |= (1 << USBE) | (1 << OTGPADE);
 
     // Unfreeze USB controller clock
@@ -65,13 +73,33 @@ void usb_init() {
 int main(void) {
     usb_init();
     while (1) {
+        // if (usb_device_state == CONFIGURED) {
+        //     UENUM = 1;
+        //     if ((keyboard_idle_remaining == 0) &&
+        //         endpoint_is_read_write_allowed()) {
+        //         send_report();
+        //         keyboard_idle_remaining = keyboard_idle_duration;
+        //     }
+        // }
     }
 }
 
 ISR(USB_GEN_vect) {
-    if (UDINT & (0x01 << EORSTI)) {
-        UDINT &= ~(0x01 << EORSTI);
+    if (UDINT & (1 << EORSTI)) {
+        UDINT &= ~(1 << EORSTI);
         bool result = configure_control_endpoint();
+    }
+    if (UDINT & (1 << SOFI)) {
+        UDINT &= ~(1 << SOFI);
+        UENUM = 1;
+        if (keyboard_idle_remaining > 0) {
+            keyboard_idle_remaining--;
+        } else if ((keyboard_idle_remaining == 0) &&
+                   endpoint_is_read_write_allowed()) {
+            send_report();
+            keyboard_idle_remaining = keyboard_idle_duration;
+        }
+        UENUM = 0;
     }
 }
 
@@ -82,55 +110,182 @@ ISR(USB_COM_vect) {
         SetupRequest_t request;
         read_setup_request(&request);
 
-        if (request.bRequest == SET_ADDRESS) {
-            usb_device_set_address(&request);
-            return;
-        } else if (request.bRequest == GET_DESCRIPTOR) {
-            usb_device_get_descriptor(&request);
-            return;
-        } else if (request.bRequest == GET_CONFIGURATION) {
-            usb_device_get_configuration(&request);
-            return;
-        } else if (request.bRequest == SET_CONFIGURATION) {
-            usb_device_set_configuration(&request);
-            return;
-        } else if (request.bRequest == GET_INTERFACE) {
-            return;
-        } else if (request.bRequest == SET_INTERFACE) {
-            return;
-        } else if (request.bRequest == SYNCH_FRAME) {
-            // only for isochronous endpoints which we don't use
-            return;
-        } else if (request.bRequest == GET_PROTOCOL) {
-            hid_get_protocol(&request);
-            return;
-        } else if (request.bRequest == SET_PROTOCOL) {
-            hid_set_protocol(&request);
-            return;
-        } else if (request.bRequest == GET_REPORT) {
-            // TODO
-            return;
-        } else if (request.bRequest == SET_REPORT) {
-            // our HID report has no output fields i.e. nothing can be set on
-            // the keyboard
-            return;
-        } else if (request.bRequest == GET_IDLE) {
-            hid_get_idle(&request);
-            return;
-        } else if (request.bRequest == SET_IDLE) {
-            hid_set_idle(&request);
+        handle_hid_request(&request);
+        if (!is_setup_packet()) {
             return;
         }
+        handle_standard_request(&request);
     }
 
-    // If we the RXSTPI flag is still set, it means that the request was not
-    // recognized We stall the endpoint. There is no need to clear the stall
+    // If the RXSTPI flag is still set, it means that the request was not
+    // recognized so we stall the endpoint. There is no need to clear the stall
     // (STALLRQC), the hardware does it automatically before the next SETUP
     // packet (see section 22.11.1 of the atmega32u4 datasheet).
     if (is_setup_packet()) {
         clear_setup_flag();
         stall_request();
     }
+}
+
+static void handle_standard_request(SetupRequest_t *request) {
+    const uint8_t bmRequestType = request->bmRequestType;
+    const uint8_t bRequest = request->bRequest;
+
+    if (bRequest == GET_STATUS) {
+        if ((bmRequestType ==
+             (REQDIR_DEVICETOHOST | REQTYPE_STANDARD | REQREC_DEVICE)) ||
+            (bmRequestType ==
+             (REQDIR_DEVICETOHOST | REQTYPE_STANDARD | REQREC_INTERFACE)) ||
+            (bmRequestType ==
+             (REQDIR_DEVICETOHOST | REQTYPE_STANDARD | REQREC_ENDPOINT))) {
+            usb_device_get_status(request);
+        }
+    } else if (bRequest == SET_ADDRESS) {
+        if (bmRequestType ==
+            (REQDIR_HOSTTODEVICE | REQTYPE_STANDARD | REQREC_DEVICE)) {
+            usb_device_set_address(request);
+        }
+    } else if (bRequest == GET_DESCRIPTOR) {
+        if ((bmRequestType ==
+             (REQDIR_DEVICETOHOST | REQTYPE_STANDARD | REQREC_DEVICE)) ||
+            (bmRequestType ==
+             (REQDIR_DEVICETOHOST | REQTYPE_STANDARD | REQREC_INTERFACE))) {
+            // The last bmRequestType type is not in the USB 2.0 specification,
+            // but it is apparently needed (LUFA also uses it,
+            // Drivers/USB/Core/DeviceStandardReq.c)
+            usb_device_get_descriptor(request);
+        }
+    } else if (bRequest == GET_CONFIGURATION) {
+        if (bmRequestType ==
+            (REQDIR_DEVICETOHOST | REQTYPE_STANDARD | REQREC_DEVICE)) {
+            usb_device_get_configuration(request);
+        }
+    } else if (bRequest == SET_CONFIGURATION) {
+        if (bmRequestType ==
+            (REQDIR_HOSTTODEVICE | REQTYPE_STANDARD | REQREC_DEVICE)) {
+            usb_device_set_configuration(request);
+        }
+    } else if (bRequest == GET_INTERFACE) {
+        if (bmRequestType ==
+            (REQDIR_DEVICETOHOST | REQTYPE_STANDARD | REQREC_INTERFACE)) {
+            // We don't support alternate settings..
+            clear_setup_flag();
+            write_byte(0);
+            clear_in_flag();
+            clear_status_stage(request->bmRequestType);
+        }
+    } else if (bRequest == SET_INTERFACE) {
+        if (bmRequestType ==
+            (REQDIR_HOSTTODEVICE | REQTYPE_STANDARD | REQREC_INTERFACE)) {
+            // USB 2.0 Section 9.4.10: "If a device only supports a default
+            // setting for the specified interface, then a STALL may be returned
+            // in the Status stage of the request"
+        }
+    } else if (bRequest == CLEAR_FEATURE) {
+        if ((bmRequestType ==
+             (REQDIR_HOSTTODEVICE | REQTYPE_STANDARD | REQREC_DEVICE)) ||
+            (bmRequestType ==
+             (REQDIR_HOSTTODEVICE | REQTYPE_STANDARD | REQREC_INTERFACE)) ||
+            (bmRequestType ==
+             (REQDIR_HOSTTODEVICE | REQTYPE_STANDARD | REQREC_ENDPOINT))) {
+            // Noop as we don't have any features
+            clear_setup_flag();
+            clear_status_stage(request->bmRequestType);
+        }
+    } else if (bRequest == SET_FEATURE) {
+        if ((bmRequestType ==
+             (REQDIR_HOSTTODEVICE | REQTYPE_STANDARD | REQREC_DEVICE)) ||
+            (bmRequestType ==
+             (REQDIR_HOSTTODEVICE | REQTYPE_STANDARD | REQREC_INTERFACE)) ||
+            (bmRequestType ==
+             (REQDIR_HOSTTODEVICE | REQTYPE_STANDARD | REQREC_ENDPOINT))) {
+            // Noop as we don't have any features
+            clear_setup_flag();
+            clear_status_stage(request->bmRequestType);
+        }
+    } else if (bRequest == SYNCH_FRAME) {
+        if (bmRequestType ==
+            (REQDIR_DEVICETOHOST | REQTYPE_STANDARD | REQREC_ENDPOINT)) {
+            // We don't use isochronous endpoints, so we don't need to
+            // handle this
+            return;
+        }
+    }
+}
+
+static void handle_hid_request(SetupRequest_t *request) {
+    const uint8_t bmRequestType = request->bmRequestType;
+    const uint8_t bRequest = request->bRequest;
+
+    if (bRequest == GET_PROTOCOL) {
+        if (bmRequestType ==
+            (REQDIR_DEVICETOHOST | REQTYPE_CLASS | REQREC_INTERFACE)) {
+            hid_get_protocol(request);
+        }
+    } else if (request->bRequest == GET_IDLE) {
+        if (bmRequestType ==
+            (REQDIR_DEVICETOHOST | REQTYPE_CLASS | REQREC_INTERFACE)) {
+            hid_get_idle(request);
+        }
+    } else if (request->bRequest == GET_REPORT) {
+        if (bmRequestType ==
+            (REQDIR_DEVICETOHOST | REQTYPE_CLASS | REQREC_INTERFACE)) {
+            clear_setup_flag();
+
+            write_byte(0);
+            write_byte(0);  // reserved
+            if (usb_device_state == CONFIGURED) {
+                write_byte(KEY_C);
+            } else if (usb_device_state == ADDRESSED) {
+                write_byte(KEY_A);
+            } else {
+                write_byte(KEY_D);
+            }
+            if (usb_device_state == CONFIGURED) {
+                write_byte(KEY_C);
+            } else if (usb_device_state == ADDRESSED) {
+                write_byte(KEY_A);
+            } else {
+                write_byte(KEY_D);
+            }
+            write_byte(0);
+            write_byte(0);
+            write_byte(0);
+            write_byte(0);
+
+            clear_in_flag();
+            clear_status_stage(request->bmRequestType);
+        }
+    } else if (request->bRequest == SET_PROTOCOL) {
+        if (bmRequestType ==
+            (REQDIR_HOSTTODEVICE | REQTYPE_CLASS | REQREC_INTERFACE)) {
+            hid_set_protocol(request);
+        }
+    } else if (request->bRequest == SET_IDLE) {
+        if (bmRequestType ==
+            (REQDIR_HOSTTODEVICE | REQTYPE_CLASS | REQREC_INTERFACE)) {
+            hid_set_idle(request);
+        }
+    } else if (request->bRequest == SET_REPORT) {
+        if (bmRequestType ==
+            (REQDIR_HOSTTODEVICE | REQTYPE_CLASS | REQREC_INTERFACE)) {
+            // our HID report has no output fields i.e. nothing can be set
+            // on the keyboard
+            clear_setup_flag();
+            clear_status_stage(request->bmRequestType);
+            return;
+        }
+    }
+}
+
+static void usb_device_get_status(SetupRequest_t *request) {
+    clear_setup_flag();
+
+    write_byte(0);
+    write_byte(0);
+    clear_in_flag();
+
+    clear_status_stage(request->bmRequestType);
 }
 
 static void usb_device_set_address(SetupRequest_t *request) {
@@ -146,9 +301,9 @@ static void usb_device_set_address(SetupRequest_t *request) {
     while (!(is_in_ready()))
         ;
 
-    // The new address accanot be enabled before the status stage has completed,
-    // otherwise the status stage would fail. We must first set the status stage
-    // and only then enable the address.
+    // The new address cannot be enabled before the status stage has
+    // completed, otherwise the status stage would fail. We must first clear
+    // the status stage and only then enable the address.
     UDADDR |= (1 << ADDEN);
     usb_device_state = ADDRESSED;
 }
@@ -163,9 +318,10 @@ static void usb_device_get_descriptor(SetupRequest_t *request) {
         descriptor = (uint8_t *)&device_descriptor;
         descriptor_length = sizeof(device_descriptor);
     } else if (descriptor_type == DESCRIPTOR_CONFIGURATION) {
-        // The reponse to configuration request sends the entire confdiguration
-        // tree including interface, vendor (HID) and endpoint descriptors (not
-        // including the the HID report descriptor)
+        // The reponse to configuration request sends the entire
+        // confdiguration tree including interface, vendor (HID) and
+        // endpoint descriptors (not including the the HID report
+        // descriptor)
         descriptor = (uint8_t *)&configuration_descriptor;
         descriptor_length = sizeof(configuration_descriptor);
     } else if (descriptor_type == DESCRIPTOR_CLASS_HID) {  // HID descriptor
@@ -279,4 +435,47 @@ static void hid_set_protocol(SetupRequest_t *request) {
     clear_setup_flag();
     using_report_protocol = request->wValue == 1 ? true : false;
     clear_status_stage(request->bmRequestType);
+}
+
+// static void hid_send_report(SetupRequest_t *request) {
+//     uint8_t length = request->wLength;
+//     if (request->wLength < 18) {
+//         length = request->wLength;
+//     }
+
+//     clear_setup_flag();
+//     uint8_t num_pressed_keys = get_pressed_keys();
+
+//     write_byte(keyboard_modifiers);
+//     write_byte(0);  // reserved
+//     for (uint8_t i = 0; i < 6; i++) {
+//         if (num_pressed_keys > 6) {
+//             write_byte(KEY_ERR_OVF);
+//         } else {
+//             write_byte(keyboard_pressed_keys[i]);
+//         }
+//     }
+
+//     write_byte(keyboard_modifiers);
+//     write_byte(0);  // reserved
+//     for (uint8_t i = 0; i < 8; i++) {
+//         write_byte(keyboard_pressed_keys[i]);
+//     }
+
+//     clear_in_flag();
+//     clear_status_stage(request->bmRequestType);
+// }
+
+static void send_report() {
+    write_byte(0);
+    write_byte(0);  // reserved
+    write_byte(KEY_A);
+    write_byte(KEY_B);
+    write_byte(KEY_C);
+    write_byte(0);
+    write_byte(0);
+    write_byte(0);
+
+    // clear_in_flag();
+    UEINTX = 0b00111010;
 }
