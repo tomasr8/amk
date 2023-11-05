@@ -246,7 +246,7 @@ static void usb_device_set_configuration(SetupRequest_t *request) {
 static void hid_get_idle(SetupRequest_t *request) {
     clear_setup_flag();
 
-    UEDATX = keyboard_idle_duration << 2;  // The value is in increments of 4ms,
+    UEDATX = keyboard_idle_duration >> 2;  // The value is in increments of 4ms,
                                            // so we need to divide by 4 first
 
     clear_in_flag();
