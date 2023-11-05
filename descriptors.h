@@ -94,7 +94,7 @@ const USB_Configuration_t configuration_descriptor PROGMEM = {
     .configration = {.bLength = 0x09,
                      .bDescriptorType = 0x02,
                      .wTotalLength = 0x22,
-                     .bNumInterfaces = 0x02,
+                     .bNumInterfaces = 0x01,
                      .bConfigurationValue = 0x01,
                      .iConfiguration = 0x00,
                      .bmAttributes = 0b10100000,
