@@ -116,7 +116,7 @@ const USB_Configuration_t configuration_descriptor PROGMEM = {
             .bCountryCode = 0x00,
             .bNumDescriptors = 0x01,
             .bReportDescriptorType = 0x22,
-            .wDescriptorLength = 0x33  // size of the HID report descriptor
+            .wDescriptorLength = 45  // size of the HID report descriptor
         },
     .endpoint = {.bLength = 0x07,
                  .bDescriptorType = 0x05,
@@ -124,6 +124,9 @@ const USB_Configuration_t configuration_descriptor PROGMEM = {
                  .bmAttributes = 0b00000011,
                  .wMaxPacketSize = 0x40,  // 64
                  .bInterval = 0x0A}};
+
+
+#define REPORT_SIZE 6
 
 // Boot protocol compatible report descriptor
 // See https://www.devever.net/~hl/usbnkro
@@ -133,17 +136,13 @@ static const USB_HIDReportDescriptor_t hid_report_descriptor[] PROGMEM = {
                  // really, so this table is very useful
     0x09, 0x06,  // Usage - Keyboard
     0xA1, 0x01,  // Collection - Application
-    0x95, 0x08,  // Report Count - 1
-    0x75, 0x08,  // Report Size - 8
-    0x91, 0x01,  // Padding
 
     // <--------------------------------------------->
 
     0x05, 0x07,  // Usage Page - Key Codes
     0x19, 0xE0,  // Usage Minimum - The bit that controls the 8 modifier
                  // characters (ctrl, command, etc)
-    0x29,
-    0xE7,  // Usage Maximum - The end of the modifier bit (0xE7 - 0xE0 = 1 byte)
+    0x29, 0xE7,  // Usage Maximum - The end of the modifier bit (0xE7 - 0xE0 = 1 byte)
     0x15, 0x00,  // Logical Minimum - These keys are either not pressed or
                  // pressed, 0 or 1
     0x25, 0x01,  // Logical Maximum - Pressed state == 1
@@ -155,7 +154,7 @@ static const USB_HIDReportDescriptor_t hid_report_descriptor[] PROGMEM = {
     0x75, 0x08,  // Report Size - 8
     0x81, 0x01,  // This byte is reserved according to the spec
 
-    0x95, 0x06,  // Report Count - For the keys
+    0x95, REPORT_SIZE,  // Report Count - For the keys
     0x75, 0x08,  // Report Size - For the keys
     0x15, 0x00,  // Logical Minimum
     0x25, 0x65,  // Logical Maximum
@@ -166,4 +165,41 @@ static const USB_HIDReportDescriptor_t hid_report_descriptor[] PROGMEM = {
     0xC0         // End collection
 };
 
-void send_report() {}
+
+// static const USB_HIDReportDescriptor_t hid_report_descriptor[] PROGMEM = {
+//     0x05, 0x01,  // Usage Page - Generic Desktop - HID Spec Appendix E E.6 - The
+//                  // values for the HID tags are not clearly listed anywhere
+//                  // really, so this table is very useful
+//     0x09, 0x06,  // Usage - Keyboard
+//     0xA1, 0x01,  // Collection - Application
+//     0x95, 0x08,  // Report Count - 8
+//     0x75, 0x08,  // Report Size - 8
+//     0x91, 0x01,  // Padding
+
+//     // <--------------------------------------------->
+
+//     0x05, 0x07,  // Usage Page - Key Codes
+//     0x19, 0xE0,  // Usage Minimum - The bit that controls the 8 modifier
+//                  // characters (ctrl, command, etc)
+//     0x29, 0xE7,  // Usage Maximum - The end of the modifier bit (0xE7 - 0xE0 = 1 byte)
+//     0x15, 0x00,  // Logical Minimum - These keys are either not pressed or
+//                  // pressed, 0 or 1
+//     0x25, 0x01,  // Logical Maximum - Pressed state == 1
+//     0x75, 0x01,  // Report Size - The size of the IN report to the host
+//     0x95, 0x08,  // Report Count - The number of keys in the report
+//     0x81, 0x02,  // Input (Data, Variable, Absolute) ;Modifier byte
+
+//     0x95, 0x01,  // Report Count - 1
+//     0x75, 0x08,  // Report Size - 8
+//     0x81, 0x01,  // This byte is reserved according to the spec
+
+//     0x95, REPORT_SIZE,  // Report Count - For the keys
+//     0x75, 0x08,  // Report Size - For the keys
+//     0x15, 0x00,  // Logical Minimum
+//     0x25, 0x65,  // Logical Maximum
+//     0x05, 0x07,  // Usage Page - Key Codes
+//     0x19, 0x00,  // Usage Minimum - 0
+//     0x29, 0x65,  // Usage Maximum - 101
+//     0x81, 0x00,  // Input - Data, Array ;Key array (6 bytes)
+//     0xC0         // End collection
+// };

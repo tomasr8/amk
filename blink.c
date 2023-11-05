@@ -173,8 +173,8 @@ static void usb_device_get_descriptor(SetupRequest_t *request) {
         descriptor_length = sizeof(configuration_descriptor.hid);
     } else if (descriptor_type ==
                DESCRIPTOR_CLASS_REPORT) {  // HID report descriptor
-        descriptor = (uint8_t *)&hid_report_descriptor;
-        descriptor_length = sizeof(hid_report_descriptor);
+        descriptor = (uint8_t *)hid_report_descriptor;
+        descriptor_length = 45;
     } else {
         // something else we don't know how to respond to
         return;
