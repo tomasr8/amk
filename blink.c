@@ -235,12 +235,15 @@ static void usb_device_set_configuration(SetupRequest_t *request) {
 
     clear_status_stage(request->bmRequestType);
 
-    if (value == 0 && usb_device_state == CONFIGURED) {
-        usb_device_state = ADDRESSED;
-    } else if (value != 0 && usb_device_state == ADDRESSED) {
-        configure_keyboard_endpoint();
-        usb_device_state = CONFIGURED;
+    if (usb_device_state == ADDRESSED) {
+        bool result = configure_keyboard_endpoint();
+        if (result) {
+            usb_device_state = CONFIGURED;
+        }
     }
+    // reset idle duration back to default
+    keyboard_idle_duration = 500;
+    keyboard_idle_remaining = 0;
 }
 
 static void hid_get_idle(SetupRequest_t *request) {
