@@ -7,16 +7,19 @@
 #include <avr/interrupt.h>
 #include <avr/io.h>
 #include <avr/pgmspace.h>
+#include <util/atomic.h>
 #include <util/delay.h>
 
 #include "descriptors.h"
 #include "endpoints.h"
 #include "keys.h"
+#include "matrix.h"
 
-bool using_report_protocol = true;
-uint8_t current_configuration = 0;
-uint16_t keyboard_idle_duration = 500;
-uint16_t keyboard_idle_remaining = 0;
+volatile bool using_report_protocol = true;
+volatile uint8_t current_configuration = 0;
+volatile uint16_t keyboard_idle_duration = 500;
+volatile uint16_t keyboard_idle_remaining = 0;
+volatile bool should_send_report = false;
 
 enum USB_DEVICE_STATE {
     DEFAULT,
@@ -24,7 +27,7 @@ enum USB_DEVICE_STATE {
     CONFIGURED,
 };
 
-enum USB_DEVICE_STATE usb_device_state = DEFAULT;
+volatile enum USB_DEVICE_STATE usb_device_state = DEFAULT;
 
 static void handle_standard_request(SetupRequest_t *request);
 static void handle_hid_request(SetupRequest_t *request);
@@ -72,14 +75,29 @@ void usb_init() {
 
 int main(void) {
     usb_init();
+    init_pins();
     while (1) {
+        bool changed = matrix_scan();
+
+        if ((usb_device_state == CONFIGURED) &&
+            (keyboard_idle_remaining == 0)) {
+            ATOMIC_BLOCK(ATOMIC_FORCEON) {
+                keyboard_state_t state = get_state();
+
+                uint8_t prev_uenum = UENUM;
+                UENUM = 1;
+                if (endpoint_is_read_write_allowed()) {
+                    send_report(state);
+
+                    // uint16_t must be updated atomically because it is also
+                    // modified in the ISR
+                    keyboard_idle_remaining = keyboard_idle_duration;
+                }
+                UENUM = prev_uenum;
+            }
+        }
+
         // if (usb_device_state == CONFIGURED) {
-        //     UENUM = 1;
-        //     if ((keyboard_idle_remaining == 0) &&
-        //         endpoint_is_read_write_allowed()) {
-        //         send_report();
-        //         keyboard_idle_remaining = keyboard_idle_duration;
-        //     }
         // }
     }
 }
@@ -91,19 +109,14 @@ ISR(USB_GEN_vect) {
     }
     if (UDINT & (1 << SOFI)) {
         UDINT &= ~(1 << SOFI);
-        UENUM = 1;
         if (keyboard_idle_remaining > 0) {
             keyboard_idle_remaining--;
-        } else if ((keyboard_idle_remaining == 0) &&
-                   endpoint_is_read_write_allowed()) {
-            send_report();
-            keyboard_idle_remaining = keyboard_idle_duration;
         }
-        UENUM = 0;
     }
 }
 
 ISR(USB_COM_vect) {
+    uint8_t prev_uenum = UENUM;
     UENUM = 0;
 
     if (is_setup_packet()) {
@@ -125,6 +138,7 @@ ISR(USB_COM_vect) {
         clear_setup_flag();
         stall_request();
     }
+    UENUM = prev_uenum;
 }
 
 static void handle_standard_request(SetupRequest_t *request) {
@@ -405,8 +419,9 @@ static void usb_device_set_configuration(SetupRequest_t *request) {
 static void hid_get_idle(SetupRequest_t *request) {
     clear_setup_flag();
 
-    UEDATX = keyboard_idle_duration >> 2;  // The value is in increments of 4ms,
-                                           // so we need to divide by 4 first
+    UEDATX =
+        keyboard_idle_remaining >> 2;  // The value is in increments of 4ms,
+                                       // so we need to divide by 4 first
 
     clear_in_flag();
     clear_status_stage(request->bmRequestType);
@@ -466,16 +481,17 @@ static void hid_set_protocol(SetupRequest_t *request) {
 //     clear_status_stage(request->bmRequestType);
 // }
 
-static void send_report() {
-    write_byte(0);
-    write_byte(0);  // reserved
-    write_byte(KEY_A);
-    write_byte(KEY_B);
-    write_byte(KEY_C);
-    write_byte(0);
-    write_byte(0);
-    write_byte(0);
+static void send_report(keyboard_state_t state) {
+    uint8_t idle = keyboard_idle_duration >> 2;
 
+    write_byte(state.modifiers);
+    write_byte(idle);  // reserved
+    write_byte(state.pressed_keys[0]);
+    write_byte(state.pressed_keys[1]);
+    write_byte(state.pressed_keys[2]);
+    write_byte(state.pressed_keys[3]);
+    write_byte(state.pressed_keys[4]);
+    write_byte(state.pressed_keys[5]);
     // clear_in_flag();
     UEINTX = 0b00111010;
 }
